@@ -59,13 +59,17 @@ func InitialModel() Model {
 	ti.Placeholder = "Ask me anything..."
 	ti.Focus()
 	ti.CharLimit = 156
-	ti.Width = 50
+	ti.Width = 80
 
 	s := spinner.New()
-	s.Spinner = spinner.Dot
+	s.Spinner = spinner.Globe
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	vp := viewport.New(80, 20)
+	vp.Style = lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("63")).
+		Padding(0, 1)
 
 	return Model{
 		TextInput: ti,
@@ -75,7 +79,7 @@ func InitialModel() Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	return m.Spinner.Tick
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -90,6 +94,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			m.Loading = true
 			m.Steps = []Step{}
+			m.Output = ""
 			return m, m.UnderstandAndExecute()
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
@@ -111,74 +116,73 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.Steps = append(m.Steps, msg.Step)
 		}
+		m.Viewport.SetContent(m.renderSteps())
 		return m, waitForStream(m.stream)
 	case StepMsg:
 		m.Steps = msg.Steps
+		m.Viewport.SetContent(m.renderSteps())
 		return m, nil
 	case finalMsg:
 		m.Loading = false
 		return m, nil
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.Spinner, cmd = m.Spinner.Update(msg)
+		return m, cmd
 	}
 
 	m.TextInput, cmd = m.TextInput.Update(msg)
 	cmds = append(cmds, cmd)
 
-	if m.Loading {
-		m.Spinner, cmd = m.Spinner.Update(msg)
-		cmds = append(cmds, cmd)
-	}
+	m.Viewport, cmd = m.Viewport.Update(msg)
+	cmds = append(cmds, cmd)
 
 	return m, tea.Batch(cmds...)
 }
 
 func (m Model) View() string {
 	// Define styles
-	borderStyle := lipgloss.NewStyle().
-		BorderStyle(lipgloss.DoubleBorder()).
-		BorderForeground(lipgloss.Color("201")).
-		BorderBackground(lipgloss.Color("57")).
-		Padding(1, 2)
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FAFAFA")).
+		Background(lipgloss.Color("#874BFD")).
+		Padding(0, 1)
 
-	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("51")).Background(lipgloss.Color("236")).Bold(true).Underline(true)
-	inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("57")).Bold(true)
-	outputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("51")).Background(lipgloss.Color("236")).Bold(true)
-	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("201")).Background(lipgloss.Color("57")).Bold(true)
-	stepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("57")).Bold(true).Padding(0, 1)
+	inputStyle := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), false, false, false, true).
+		BorderForeground(lipgloss.Color("63")).
+		Padding(0, 1)
 
-	// Animated spinner and lively status
-	status := "Ready"
+	statusStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("201")).
+		Background(lipgloss.Color("57")).
+		Bold(true)
+
+	var status string
 	if m.Loading {
-		status = statusStyle.Render(m.Spinner.View() + " Loading...")
+		status = statusStyle.Render(m.Spinner.View() + " Thinking...")
 	} else {
-		status = statusStyle.Render("✔ Done")
+		status = ""
 	}
 
 	// Compose UI sections
-	header := headerStyle.Render("Console AI - Smart Windows Assistant")
+	header := headerStyle.Render("Console Buddy")
 	input := inputStyle.Render(m.TextInput.View())
-	output := outputStyle.Render(m.Viewport.View())
 
-	var steps strings.Builder
-	for _, step := range m.Steps {
-		steps.WriteString(stepStyle.Render(step.Title))
-		steps.WriteString("\n")
-		steps.WriteString(step.Content)
-		steps.WriteString("\n\n")
-	}
-
-	ui := lipgloss.JoinVertical(lipgloss.Left,
+	return lipgloss.JoinVertical(lipgloss.Left,
 		header,
-		borderStyle.Render(output),
+		m.Viewport.View(),
 		input,
 		status,
-		borderStyle.Render(steps.String()),
 		"(ctrl+c to quit)",
-	)
-	return ui + "\n"
+	) + "\n"
 }
 
 func (m *Model) UnderstandAndExecute() tea.Cmd {
 	input := m.TextInput.Value()
+	m.TextInput.Reset()
+
 	// Check if input is a command
 	allowedCommands := map[string]bool{
 		"dir":     true,
@@ -249,6 +253,17 @@ func waitForStream(ch chan any) tea.Cmd {
 	return func() tea.Msg {
 		return <-ch
 	}
+}
+
+func (m Model) renderSteps() string {
+	var steps strings.Builder
+	for _, step := range m.Steps {
+		steps.WriteString(lipgloss.NewStyle().Bold(true).Render(step.Title))
+		steps.WriteString("\n")
+		steps.WriteString(step.Content)
+		steps.WriteString("\n\n")
+	}
+	return steps.String()
 }
 
 type stream chan any
