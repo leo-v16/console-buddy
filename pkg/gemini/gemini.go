@@ -3,165 +3,115 @@ package gemini
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/generative-ai-go/genai"
-	"github.com/joho/godotenv"
 	"google.golang.org/api/iterator"
-	"google.golang.org/api/option"
 )
 
-var systemPrompt string
+const (
+	// maxLoopIterations sets a hard limit on the number of tool-call cycles
+	// to prevent infinite loops.
+	maxLoopIterations = 15
 
-func init() {
-	// Load .env file. Errors are not fatal, as env vars can be set manually.
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found or error loading it")
-	}
+	// conversationTimeout is the maximum duration for the entire conversation flow.
+	conversationTimeout = 2 * time.Minute
+)
 
-	promptBytes, err := os.ReadFile("system_prompt.txt")
-	if err != nil {
-		log.Fatalf("Failed to read system prompt file: %v", err)
-	}
-	systemPrompt = string(promptBytes)
-}
+// ContinueConversation handles the core logic of the AI's turn-based conversation.
+// It sends the user's input to the Gemini model, processes tool calls, and streams
+// the final text response back to the user interface.
+func ContinueConversation(model *genai.GenerativeModel, history []string, input string, stepCallback func(title, content string)) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), conversationTimeout)
+	defer cancel()
 
-// NewClient creates a new Gemini client with a tool for executing shell commands.
-func NewClient() (*genai.GenerativeModel, error) {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY environment variable not set")
-	}
+	// Start a new chat session and reconstruct the history.
+	cs := model.StartChat()
+	cs.History = buildHistory(history)
 
-	ctx := context.Background()
-	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Gemini client: %w", err)
-	}
-
-	// keep it gemini-2.5-flash for now don't change it
-	model := client.GenerativeModel("gemini-2.5-flash")
-
-	shellTool := &genai.Tool{
-		FunctionDeclarations: []*genai.FunctionDeclaration{
-			{
-				Name:        "execute_shell_command",
-				Description: "Executes a shell command on the user's machine.",
-				Parameters: &genai.Schema{
-					Type: genai.TypeObject,
-					Properties: map[string]*genai.Schema{
-						"command": {
-							Type:        genai.TypeString,
-							Description: "The command to execute.",
-						},
-					},
-					Required: []string{"command"},
-				},
-			},
-		},
-	}
-	model.Tools = []*genai.Tool{shellTool}
-	return model, nil
-}
-
-// ContinueConversation sends the conversation history to Gemini, handles tool calls, and gets a response.
-func ContinueConversation(gemini *genai.GenerativeModel, history []string, input string, stepCallback func(title, content string)) (string, error) {
-	ctx := context.Background()
-	cs := gemini.StartChat()
-
-	// Reconstruct chat history for the model
-	for _, line := range history {
-		if strings.HasPrefix(line, "User: ") {
-			cs.History = append(cs.History, &genai.Content{Parts: []genai.Part{genai.Text(strings.TrimPrefix(line, "User: "))}, Role: "user"})
-		} else if strings.HasPrefix(line, "Assistant: ") {
-			cs.History = append(cs.History, &genai.Content{Parts: []genai.Part{genai.Text(strings.TrimPrefix(line, "Assistant: "))}, Role: "model"})
-		}
-	}
-
-	// Prepend the system prompt to the user's first message in a session
-	fullPrompt := input
+	// Use the first message as the system prompt if it's the start of the conversation.
 	if len(history) == 0 {
-		projectAnalysis, err := AnalyzeProject()
-		if err != nil {
-			log.Printf("Failed to analyze project: %v", err)
-		}
-		fullPrompt = systemPrompt + "\n\nProject Context:\n" + projectAnalysis + "\n\nUser: " + input
+		model.SystemInstruction = &genai.Content{Parts: []genai.Part{genai.Text(systemPrompt)}}
 	}
 
-	iter := cs.SendMessageStream(ctx, genai.Text(fullPrompt))
-	var responseBuilder strings.Builder
+	stepCallback("Thinking...", "")
 
-	for {
+	// Send the user's message and start the processing loop.
+	iter := cs.SendMessageStream(ctx, genai.Text(input))
+
+	var responseBuilder strings.Builder
+	var lastTextChunk string
+	var hasResponded bool
+
+	for i := 0; i < maxLoopIterations; i++ {
 		resp, err := iter.Next()
 		if err == iterator.Done {
-			break
+			break // Normal end of conversation turn.
 		}
 		if err != nil {
-			return "", fmt.Errorf("failed to read stream: %w", err)
+			return "", fmt.Errorf("stream error: %w", err)
 		}
 
-		if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
-			part := resp.Candidates[0].Content.Parts[0]
-			if text, ok := part.(genai.Text); ok {
-				chunk := string(text)
-				responseBuilder.WriteString(chunk)
-				stepCallback("Thinking...", chunk)
-			} else if fc, ok := part.(genai.FunctionCall); ok {
-				stepCallback("Function Call", fmt.Sprintf("Executing command: %s", fc.Args["command"]))
-				// Handle function call
-				command, ok := fc.Args["command"].(string)
-				if !ok {
-					return "", fmt.Errorf("invalid 'command' argument")
-				}
+		if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
+			continue // Skip empty responses.
+		}
 
-				// Execute the command
-				cmd := exec.Command("cmd", "/C", command)
-				output, err := cmd.CombinedOutput()
+		// Process each part of the response (text or function call).
+		for _, part := range resp.Candidates[0].Content.Parts {
+			switch p := part.(type) {
+			case genai.Text:
+				// Append text to the response and notify the UI.
+				textChunk := string(p)
+				responseBuilder.WriteString(textChunk)
+				// To avoid spamming the UI, only send updates when the text changes.
+				if textChunk != lastTextChunk {
+					stepCallback("Response", textChunk)
+					lastTextChunk = textChunk
+				}
+				hasResponded = true
+
+			case genai.FunctionCall:
+				// Execute the requested tool and send the result back to the model.
+				stepCallback("Tool Call", fmt.Sprintf("Executing: %s", p.Name))
+				output, err := executeTool(p)
 				if err != nil {
-					log.Printf("Error executing command: %v", err)
+					stepCallback("Tool Error", err.Error())
 				}
+				stepCallback("Tool Output", output)
 
-				// Send the result back to the model
-				errStr := ""
-				if err != nil {
-					errStr = err.Error()
-				}
-				fr := genai.FunctionResponse{
-					Name: "execute_shell_command",
-					Response: map[string]interface{}{
-						"output": string(output),
-						"error":  errStr,
-					},
-				}
-
-				// Send the function response back to the model in the same stream.
-				iter = cs.SendMessageStream(ctx, fr)
+				// Send the tool's output back to the model to continue the loop.
+				iter = cs.SendMessageStream(ctx, genai.FunctionResponse{
+					Name:     p.Name,
+					Response: map[string]interface{}{"output": output},
+				})
 			}
 		}
+	}
+
+	// If the model finishes without generating a text response, provide a default message.
+	if !hasResponded {
+		return "The model finished its work without providing a direct response.", nil
 	}
 
 	return responseBuilder.String(), nil
 }
 
-// AnalyzeProject analyzes the project structure and files.
-func AnalyzeProject() (string, error) {
-	var projectStructure strings.Builder
-	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			projectStructure.WriteString(fmt.Sprintf("- %s\n", path))
-		}
+// buildHistory reconstructs the conversation history from a simple string slice.
+func buildHistory(history []string) []*genai.Content {
+	if len(history) == 0 {
 		return nil
-	})
-	if err != nil {
-		return "", err
 	}
 
-	return projectStructure.String(), nil
+	var contents []*genai.Content
+	for i := 0; i < len(history); i += 2 {
+		userMessage := history[i]
+		modelMessage := ""
+		if i+1 < len(history) {
+			modelMessage = history[i+1]
+		}
+		contents = append(contents, &genai.Content{Parts: []genai.Part{genai.Text(userMessage)}, Role: "user"})
+		contents = append(contents, &genai.Content{Parts: []genai.Part{genai.Text(modelMessage)}, Role: "model"})
+	}
+	return contents
 }

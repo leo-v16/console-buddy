@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -10,38 +11,19 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/google/generative-ai-go/genai"
 
-	"console-ai/pkg/commander"
 	"console-ai/pkg/gemini"
 	"console-ai/pkg/history"
 )
 
 type (
-	// ErrMsg is a custom error message to be sent as a tea.Msg.
-	ErrMsg error
-
-	// SuccessMsg is a custom success message to be sent as a tea.Msg.
-	SuccessMsg string
-
-	// StreamMsg is a message that contains a single step in the model's thinking process.
-	StreamMsg struct {
-		Step Step
-	}
-
-	// StepMsg is a message that contains all the steps in the model's thinking process.
-	StepMsg struct {
-		Steps []Step
-	}
-
-	// finalMsg is a message that signals the end of the streaming.
-	finalMsg struct{}
+	ErrMsg               error
+	SuccessMsg           string
+	StreamMsg            struct{ Title, Content string }
+	startConversationMsg struct{ input string }
+	finalMsg             struct{}
 )
 
-// Step represents a single step in the model's thinking process.
-type Step struct {
-	Title   string
-	Content string
-}
-
+// Model represents the state of the TUI application.
 type Model struct {
 	Viewport            viewport.Model
 	TextInput           textinput.Model
@@ -49,221 +31,166 @@ type Model struct {
 	Loading             bool
 	Gemini              *genai.GenerativeModel
 	ConversationHistory []string
-	Output              string
-	Steps               []Step
-	stream              stream
+	stream              *conversationStream
+	currentResponse     *strings.Builder
+	lastRendered        string
 }
 
+// conversationStream holds the channel for receiving messages from the Gemini API.
+type conversationStream struct {
+	ch chan tea.Msg
+}
+
+// InitialModel creates the initial state of the TUI.
 func InitialModel() Model {
 	ti := textinput.New()
-	ti.Placeholder = "Ask me anything..."
+	ti.Placeholder = "Ask the AI to do something..."
 	ti.Focus()
-	ti.CharLimit = 156
 	ti.Width = 80
 
 	s := spinner.New()
-	s.Spinner = spinner.Globe
+	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("63")).
+		BorderForeground(lipgloss.Color("62")).
 		Padding(0, 1)
 
 	return Model{
-		TextInput: ti,
-		Spinner:   s,
-		Viewport:  vp,
+		TextInput:       ti,
+		Spinner:         s,
+		Viewport:        vp,
+		currentResponse: &strings.Builder{},
 	}
 }
 
+// Init initializes the TUI.
 func (m Model) Init() tea.Cmd {
 	return m.Spinner.Tick
 }
 
+// Update handles all incoming messages and updates the model accordingly.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var (
-		cmd  tea.Cmd
-		cmds []tea.Cmd
-	)
+	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyEnter:
+			if m.Loading {
+				return m, nil
+			}
 			m.Loading = true
-			m.Steps = []Step{}
-			m.Output = ""
-			return m, m.UnderstandAndExecute()
+			m.currentResponse.Reset()
+			m.lastRendered = ""
+			return m, func() tea.Msg {
+				return startConversationMsg{input: m.TextInput.Value()}
+			}
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
 		}
+
+	case startConversationMsg:
+		m.stream = newConversationStream(m.Gemini, m.ConversationHistory, msg.input)
+		return m, m.stream.waitForNextMsg()
+
 	case ErrMsg:
 		m.Loading = false
-		m.Output = msg.Error()
-		m.Viewport.SetContent(m.Output)
+		m.currentResponse.WriteString(fmt.Sprintf("\nError: %v", msg))
+		m.renderView()
 		return m, nil
+
 	case SuccessMsg:
-		m.Loading = false
-		m.Output = string(msg)
-		m.Viewport.SetContent(m.Output)
-		return m, nil
+		m.ConversationHistory = append(m.ConversationHistory, m.TextInput.Value(), string(msg))
+		history.SaveHistory(m.ConversationHistory)
+		m.TextInput.Reset()
+		return m, m.stream.waitForNextMsg()
+
 	case StreamMsg:
-		// append to the last step content
-		if len(m.Steps) > 0 {
-			m.Steps[len(m.Steps)-1].Content += msg.Step.Content
-		} else {
-			m.Steps = append(m.Steps, msg.Step)
-		}
-		m.Viewport.SetContent(m.renderSteps())
-		return m, waitForStream(m.stream)
-	case StepMsg:
-		m.Steps = msg.Steps
-		m.Viewport.SetContent(m.renderSteps())
-		return m, nil
+		m.currentResponse.WriteString(msg.Content)
+		m.renderView()
+		return m, m.stream.waitForNextMsg()
+
 	case finalMsg:
 		m.Loading = false
-		return m, nil
+		m.TextInput.Focus()
+		return m, textinput.Blink
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.Spinner, cmd = m.Spinner.Update(msg)
-		return m, cmd
+		cmds = append(cmds, cmd)
 	}
 
+	var cmd tea.Cmd
 	m.TextInput, cmd = m.TextInput.Update(msg)
 	cmds = append(cmds, cmd)
-
 	m.Viewport, cmd = m.Viewport.Update(msg)
 	cmds = append(cmds, cmd)
 
 	return m, tea.Batch(cmds...)
 }
 
+// View renders the entire UI.
 func (m Model) View() string {
-	// Define styles
-	headerStyle := lipgloss.NewStyle().
+	header := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FAFAFA")).
-		Background(lipgloss.Color("#874BFD")).
-		Padding(0, 1)
-
-	inputStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(lipgloss.Color("63")).
-		Padding(0, 1)
-
-	statusStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("201")).
-		Background(lipgloss.Color("57")).
-		Bold(true)
+		Background(lipgloss.Color("#7D56F4")).
+		Padding(0, 1).
+		Render("AI Console Agent")
 
 	var status string
 	if m.Loading {
-		status = statusStyle.Render(m.Spinner.View() + " Thinking...")
+		status = m.Spinner.View() + " AI is working..."
 	} else {
-		status = ""
+		status = "Ready. (ctrl+c to quit)"
 	}
 
-	// Compose UI sections
-	header := headerStyle.Render("Console Buddy")
-	input := inputStyle.Render(m.TextInput.View())
-
-	return lipgloss.JoinVertical(lipgloss.Left,
+	return fmt.Sprintf(
+		"%s\n%s\n%s\n%s",
 		header,
 		m.Viewport.View(),
-		input,
+		m.TextInput.View(),
 		status,
-		"(ctrl+c to quit)",
-	) + "\n"
+	)
 }
 
-func (m *Model) UnderstandAndExecute() tea.Cmd {
-	input := m.TextInput.Value()
-	m.TextInput.Reset()
-
-	// Check if input is a command
-	allowedCommands := map[string]bool{
-		"dir":     true,
-		"echo":    true,
-		"type":    true,
-		"copy":    true,
-		"del":     true,
-		"cls":     true,
-		"cd":      true,
-		"analyze": true,
-	}
-	firstWord := strings.Fields(input)
-	isCommand := false
-	if len(firstWord) > 0 {
-		baseCmd := strings.Trim(strings.ToLower(firstWord[0]), ".:;!`'\"")
-		if allowedCommands[baseCmd] {
-			isCommand = true
-		}
-	}
-
-	if isCommand {
-		if firstWord[0] == "analyze" {
-			return func() tea.Msg {
-				output, err := gemini.AnalyzeProject()
-				if err != nil {
-					return ErrMsg(err)
-				}
-				return SuccessMsg(output)
-			}
-		}
-		// Run as command
-		return func() tea.Msg {
-			output, err := commander.ExecuteCommand(input)
-			if err != nil {
-				return ErrMsg(err)
-			}
-			// Save to conversation history
-			m.ConversationHistory = append(m.ConversationHistory, "Command: "+input)
-			m.ConversationHistory = append(m.ConversationHistory, "Output: "+output)
-			history.SaveConversation(m.ConversationHistory)
-			return SuccessMsg(output)
-		}
-	} else {
-		// Treat as conversation
-		ch := make(chan any)
-		m.stream = ch
-		go func() {
-			defer close(ch)
-			reply, err := gemini.ContinueConversation(m.Gemini, m.ConversationHistory, input, func(title, content string) {
-				ch <- StreamMsg{Step: Step{Title: title, Content: content}}
-			})
-			if err != nil {
-				ch <- ErrMsg(err)
-				return
-			}
-			// Save to conversation history
-			m.ConversationHistory = append(m.ConversationHistory, "User: "+input)
-			m.ConversationHistory = append(m.ConversationHistory, "Assistant: "+reply)
-			history.SaveConversation(m.ConversationHistory)
-			ch <- SuccessMsg(reply)
-			ch <- finalMsg{}
-		}()
-		return waitForStream(ch)
+// renderView updates the viewport with the latest content.
+func (m *Model) renderView() {
+	newContent := m.currentResponse.String()
+	if newContent != m.lastRendered {
+		m.Viewport.SetContent(newContent)
+		m.lastRendered = newContent
+		m.Viewport.GotoBottom()
 	}
 }
 
-func waitForStream(ch chan any) tea.Cmd {
+// newConversationStream creates a new stream for handling the Gemini conversation.
+func newConversationStream(geminiModel *genai.GenerativeModel, history []string, input string) *conversationStream {
+	ch := make(chan tea.Msg)
+	go func() {
+		defer close(ch)
+		reply, err := gemini.ContinueConversation(geminiModel, history, input, func(title, content string) {
+			ch <- StreamMsg{Title: title, Content: content}
+		})
+
+		if err != nil {
+			ch <- ErrMsg(err)
+			return
+		}
+
+		ch <- SuccessMsg(reply)
+		ch <- finalMsg{}
+	}()
+	return &conversationStream{ch: ch}
+}
+
+// waitForNextMsg waits for the next message from the conversation stream.
+func (s *conversationStream) waitForNextMsg() tea.Cmd {
 	return func() tea.Msg {
-		return <-ch
+		return <-s.ch
 	}
 }
-
-func (m Model) renderSteps() string {
-	var steps strings.Builder
-	for _, step := range m.Steps {
-		steps.WriteString(lipgloss.NewStyle().Bold(true).Render(step.Title))
-		steps.WriteString("\n")
-		steps.WriteString(step.Content)
-		steps.WriteString("\n\n")
-	}
-	return steps.String()
-}
-
-type stream chan any

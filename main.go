@@ -6,22 +6,28 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"console-ai/pkg/gemini"
+	"console-ai/pkg/history"
 	"console-ai/pkg/tui"
 )
 
 func main() {
-	gemini, err := gemini.NewClient()
+	// Initialize the Gemini client first.
+	geminiClient, err := gemini.NewClient()
 	if err != nil {
 		log.Fatalf("Failed to create Gemini client: %v", err)
 	}
 
+	// Create the TUI model.
 	m := tui.InitialModel()
-	m.Gemini = gemini
 
+	// Set the Gemini client and load the conversation history.
+	m.Gemini = geminiClient
+	m.ConversationHistory = history.LoadHistory()
+
+	// Start the Bubble Tea program.
 	p := tea.NewProgram(m)
 
-	_, err = p.Run()
-	if err != nil {
+	if _, err := p.Run(); err != nil {
 		log.Fatalf("Alas, there's been an error: %v", err)
 	}
 }

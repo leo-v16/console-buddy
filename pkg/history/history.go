@@ -5,10 +5,13 @@ import (
 	"os"
 )
 
-// SaveConversation saves the conversation history to a binary file.
-func SaveConversation(history []string) {
-	f, err := os.OpenFile("conversation_history.bin", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+const historyFileName = "conversation_history.gob"
+
+// SaveHistory saves the conversation history to a binary file using gob encoding.
+func SaveHistory(history []string) {
+	f, err := os.Create(historyFileName)
 	if err != nil {
+		// Log error or handle it appropriately
 		return
 	}
 	defer f.Close()
@@ -16,14 +19,17 @@ func SaveConversation(history []string) {
 	enc.Encode(history)
 }
 
-// LoadConversation loads the conversation history from a binary file.
-func LoadConversation() []string {
+// LoadHistory loads the conversation history from the gob file.
+func LoadHistory() []string {
 	var history []string
-	f, err := os.Open("conversation_history.bin")
-	if err == nil {
-		dec := gob.NewDecoder(f)
-		dec.Decode(&history)
-		f.Close()
+	f, err := os.Open(historyFileName)
+	if err != nil {
+		// File might not exist on first run, which is fine.
+		return []string{}
 	}
+	defer f.Close()
+
+	dec := gob.NewDecoder(f)
+	dec.Decode(&history)
 	return history
 }
