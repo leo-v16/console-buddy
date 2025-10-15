@@ -4,15 +4,19 @@ import (
 	"fmt"
 	"strings"
 
+	"console-ai/pkg/agent"
+	"console-ai/pkg/config"
+	"console-ai/pkg/gemini"
+	"console-ai/pkg/history"
+
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/google/generative-ai-go/genai"
-
-	"console-ai/pkg/gemini"
-	"console-ai/pkg/history"
 )
 
 type (
@@ -31,9 +35,13 @@ type Model struct {
 	Loading             bool
 	Gemini              *genai.GenerativeModel
 	ConversationHistory []string
+	ProjectInfo         *agent.ProjectInfo
 	stream              *conversationStream
 	currentResponse     *strings.Builder
 	lastRendered        string
+	Config              *config.Config
+	Help                help.Model
+	Keys                *helpKeyMap
 }
 
 // conversationStream holds the channel for receiving messages from the Gemini API.
@@ -42,7 +50,7 @@ type conversationStream struct {
 }
 
 // InitialModel creates the initial state of the TUI.
-func InitialModel() Model {
+func InitialModel(cfg *config.Config) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Ask the AI to do something..."
 	ti.Focus()
@@ -58,11 +66,17 @@ func InitialModel() Model {
 		BorderForeground(lipgloss.Color("62")).
 		Padding(0, 1)
 
+	keys := newHelpKeyMap()
+	h := newHelp(keys)
+
 	return Model{
 		TextInput:       ti,
 		Spinner:         s,
 		Viewport:        vp,
 		currentResponse: &strings.Builder{},
+		Config:          cfg,
+		Help:            h,
+		Keys:            keys,
 	}
 }
 
@@ -77,6 +91,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		switch {
+		case key.Matches(msg, m.Keys.help):
+			m.Help.ShowAll = !m.Help.ShowAll
+			return m, nil
+		case key.Matches(msg, m.Keys.quit):
+			return m, tea.Quit
+		}
+
 		switch msg.Type {
 		case tea.KeyEnter:
 			if m.Loading {
@@ -93,7 +115,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case startConversationMsg:
-		m.stream = newConversationStream(m.Gemini, m.ConversationHistory, msg.input)
+		m.stream = newConversationStream(m.Gemini, m.ConversationHistory, msg.input, m.Config.HumorLevel, m.Config)
 		return m, m.stream.waitForNextMsg()
 
 	case ErrMsg:
@@ -104,7 +126,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SuccessMsg:
 		m.ConversationHistory = append(m.ConversationHistory, m.TextInput.Value(), string(msg))
-		history.SaveHistory(m.ConversationHistory)
+		// Save session data with project context
+		history.SaveSession(m.Config.ConversationHistory, m.ConversationHistory, m.ProjectInfo, m.Config.HumorLevel)
 		m.TextInput.Reset()
 		return m, m.stream.waitForNextMsg()
 
@@ -140,21 +163,36 @@ func (m Model) View() string {
 		Foreground(lipgloss.Color("#FAFAFA")).
 		Background(lipgloss.Color("#7D56F4")).
 		Padding(0, 1).
-		Render("AI Console Agent")
+		Render("Console Buddy")
 
-	var status string
+	statusText := "Ready. (? for help)"
 	if m.Loading {
-		status = m.Spinner.View() + " AI is working..."
-	} else {
-		status = "Ready. (ctrl+c to quit)"
+		statusText = m.Spinner.View() + " AI is working..."
 	}
 
+	projectStatus := ""
+	if m.ProjectInfo != nil {
+		projectStatus = fmt.Sprintf(" | %s", m.ProjectInfo.Language)
+		if m.ProjectInfo.Framework != "" {
+			projectStatus += fmt.Sprintf(" (%s)", m.ProjectInfo.Framework)
+		}
+	}
+	
+	statusBar := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFF")).
+		Background(lipgloss.Color("#5C5C5C")).
+		Padding(0, 1).
+		Render(fmt.Sprintf("%s | Model: %s%s", statusText, m.Config.ModelName, projectStatus))
+
+	helpView := m.Help.View(m.Keys)
+
 	return fmt.Sprintf(
-		"%s\n%s\n%s\n%s",
+		"%s\n%s\n%s\n%s\n%s",
 		header,
 		m.Viewport.View(),
 		m.TextInput.View(),
-		status,
+		statusBar,
+		helpView,
 	)
 }
 
@@ -169,11 +207,11 @@ func (m *Model) renderView() {
 }
 
 // newConversationStream creates a new stream for handling the Gemini conversation.
-func newConversationStream(geminiModel *genai.GenerativeModel, history []string, input string) *conversationStream {
+func newConversationStream(geminiModel *genai.GenerativeModel, history []string, input string, humorLevel int, cfg *config.Config) *conversationStream {
 	ch := make(chan tea.Msg)
 	go func() {
 		defer close(ch)
-		reply, err := gemini.ContinueConversation(geminiModel, history, input, func(title, content string) {
+		reply, err := gemini.ContinueConversation(geminiModel, history, input, humorLevel, cfg, func(title, content string) {
 			ch <- StreamMsg{Title: title, Content: content}
 		})
 

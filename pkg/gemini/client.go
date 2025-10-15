@@ -3,24 +3,23 @@ package gemini
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/option"
 )
 
+// Hardcoded API key for Console AI
+const DefaultAPIKey = "AIzaSyC-gNO6yZPjN1XgS0k6ncidRMPeoQ72Z9U"
+
 // NewClient creates and configures a new Gemini client.
-// It now loads the API key directly from the constants file.
-func NewClient() (*genai.GenerativeModel, error) {
-	apiKey := geminiAPIKey // Using the constant from constants.go
+// Uses hardcoded API key if none provided, defaults to gemini-2.5-flash model.
+func NewClient(apiKey, modelName string) (*genai.GenerativeModel, error) {
+	// Use hardcoded API key if none provided
 	if apiKey == "" {
-		// This check remains as a safeguard, though it should always be present.
-		return nil, fmt.Errorf("gemini API key is not set in constants.go")
+		apiKey = DefaultAPIKey
 	}
 
-	// Check for a user-provided model name from environment variables,
-	// otherwise default to "gemini-1.5-flash".
-	modelName := os.Getenv("GEMINI_MODEL")
+	// Use latest model as default
 	if modelName == "" {
 		modelName = "gemini-2.5-flash"
 	}
@@ -31,11 +30,9 @@ func NewClient() (*genai.GenerativeModel, error) {
 		return nil, fmt.Errorf("failed to create Gemini client: %w", err)
 	}
 
-	// Configure the generative model with the selected model name and tools
 	model := client.GenerativeModel(modelName)
-	model.Tools = defineTools() // Assumes defineTools() is in the same package
+	model.Tools = defineTools()
 
-	// Set safety settings to block harmful content
 	model.SafetySettings = []*genai.SafetySetting{
 		{Category: genai.HarmCategoryHarassment, Threshold: genai.HarmBlockMediumAndAbove},
 		{Category: genai.HarmCategoryHateSpeech, Threshold: genai.HarmBlockMediumAndAbove},
