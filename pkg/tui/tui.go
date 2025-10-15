@@ -42,6 +42,8 @@ type Model struct {
 	Config              *config.Config
 	Help                help.Model
 	Keys                *helpKeyMap
+	width               int
+	height              int
 }
 
 // conversationStream holds the channel for receiving messages from the Gemini API.
@@ -54,13 +56,14 @@ func InitialModel(cfg *config.Config) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Ask the AI to do something..."
 	ti.Focus()
-	ti.Width = 80
+	ti.CharLimit = 0 // No limit
 
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
-	vp := viewport.New(80, 20)
+	// Start with reasonable defaults, will be updated on first resize
+	vp := viewport.New(100, 20)
 	vp.Style = lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("62")).
@@ -77,6 +80,8 @@ func InitialModel(cfg *config.Config) Model {
 		Config:          cfg,
 		Help:            h,
 		Keys:            keys,
+		width:           100,
+		height:          24,
 	}
 }
 
@@ -90,6 +95,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.updateSizes()
+		return m, nil
+		
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.Keys.help):
@@ -156,6 +167,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// updateSizes updates component sizes based on terminal dimensions
+func (m *Model) updateSizes() {
+	// Calculate available space
+	headerHeight := 1
+	statusHeight := 1
+	helpHeight := 2
+	inputHeight := 1
+	padding := 2
+	
+	// Update text input width
+	inputWidth := m.width - 4 // Account for borders and padding
+	if inputWidth < 20 {
+		inputWidth = 20
+	}
+	m.TextInput.Width = inputWidth
+	
+	// Update viewport dimensions
+	viewportHeight := m.height - headerHeight - statusHeight - helpHeight - inputHeight - padding
+	if viewportHeight < 5 {
+		viewportHeight = 5
+	}
+	
+	viewportWidth := m.width - 4 // Account for borders and padding
+	if viewportWidth < 20 {
+		viewportWidth = 20
+	}
+	
+	m.Viewport.Width = viewportWidth
+	m.Viewport.Height = viewportHeight
+}
+
 // View renders the entire UI.
 func (m Model) View() string {
 	header := lipgloss.NewStyle().
@@ -163,6 +205,8 @@ func (m Model) View() string {
 		Foreground(lipgloss.Color("#FAFAFA")).
 		Background(lipgloss.Color("#7D56F4")).
 		Padding(0, 1).
+		Width(m.width-2).
+		Align(lipgloss.Center).
 		Render("Console Buddy")
 
 	statusText := "Ready. (? for help)"
@@ -173,18 +217,38 @@ func (m Model) View() string {
 	projectStatus := ""
 	if m.ProjectInfo != nil {
 		projectStatus = fmt.Sprintf(" | %s", m.ProjectInfo.Language)
-		if m.ProjectInfo.Framework != "" {
+		if m.ProjectInfo.Framework != "" && len(m.ProjectInfo.Framework) < 20 {
 			projectStatus += fmt.Sprintf(" (%s)", m.ProjectInfo.Framework)
 		}
+	}
+	
+	// Create status text and truncate if too long
+	statusFullText := fmt.Sprintf("%s | Model: %s%s", statusText, m.Config.ModelName, projectStatus)
+	if len(statusFullText) > m.width-4 {
+		// Truncate to fit
+		statusFullText = statusFullText[:m.width-7] + "..."
 	}
 	
 	statusBar := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#FFF")).
 		Background(lipgloss.Color("#5C5C5C")).
 		Padding(0, 1).
-		Render(fmt.Sprintf("%s | Model: %s%s", statusText, m.Config.ModelName, projectStatus))
+		Width(m.width-2).
+		Render(statusFullText)
 
 	helpView := m.Help.View(m.Keys)
+	// Ensure help doesn't overflow
+	if len(helpView) > m.width {
+		helpLines := strings.Split(helpView, "\n")
+		var truncatedLines []string
+		for _, line := range helpLines {
+			if len(line) > m.width-2 {
+				line = line[:m.width-5] + "..."
+			}
+			truncatedLines = append(truncatedLines, line)
+		}
+		helpView = strings.Join(truncatedLines, "\n")
+	}
 
 	return fmt.Sprintf(
 		"%s\n%s\n%s\n%s\n%s",
@@ -200,10 +264,45 @@ func (m Model) View() string {
 func (m *Model) renderView() {
 	newContent := m.currentResponse.String()
 	if newContent != m.lastRendered {
-		m.Viewport.SetContent(newContent)
+		// Wrap long lines to prevent overflow
+		wrappedContent := m.wrapText(newContent, m.Viewport.Width-4)
+		m.Viewport.SetContent(wrappedContent)
 		m.lastRendered = newContent
 		m.Viewport.GotoBottom()
 	}
+}
+
+// wrapText wraps text to fit within the specified width
+func (m *Model) wrapText(text string, width int) string {
+	if width <= 0 {
+		width = 80 // fallback width
+	}
+	
+	lines := strings.Split(text, "\n")
+	var wrappedLines []string
+	
+	for _, line := range lines {
+		if len(line) <= width {
+			wrappedLines = append(wrappedLines, line)
+		} else {
+			// Break long lines into multiple lines
+			for len(line) > width {
+				// Try to break at word boundaries
+				breakPoint := width
+				if spaceIdx := strings.LastIndex(line[:width], " "); spaceIdx > width/2 {
+					breakPoint = spaceIdx
+				}
+				
+				wrappedLines = append(wrappedLines, line[:breakPoint])
+				line = strings.TrimSpace(line[breakPoint:])
+			}
+			if len(line) > 0 {
+				wrappedLines = append(wrappedLines, line)
+			}
+		}
+	}
+	
+	return strings.Join(wrappedLines, "\n")
 }
 
 // newConversationStream creates a new stream for handling the Gemini conversation.

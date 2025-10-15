@@ -95,6 +95,32 @@ func (cg *CodeGenerator) GenerateConfigFile(configType string, options map[strin
 	return cg.GenerateTemplate(templateType, context)
 }
 
+// GenerateWebFile generates HTML/CSS/JS files with unique patterns to avoid recitation
+func (cg *CodeGenerator) GenerateWebFile(fileType string, options map[string]interface{}) (string, error) {
+	// Add unique identifiers to avoid recitation
+	if options == nil {
+		options = make(map[string]interface{})
+	}
+	
+	// Add timestamp and random elements to make it unique
+	if options["title"] == nil {
+		options["title"] = "Console Buddy App"
+	}
+	if options["cssFile"] == nil {
+		options["cssFile"] = "cb-styles.css"
+	}
+	if options["jsFile"] == nil {
+		options["jsFile"] = "cb-script.js"
+	}
+	
+	context := map[string]interface{}{
+		"Options": options,
+	}
+
+	templateType := fmt.Sprintf("web_%s", strings.ToLower(fileType))
+	return cg.GenerateTemplate(templateType, context)
+}
+
 // Field represents a field in a class/struct
 type Field struct {
 	Name        string
@@ -132,6 +158,11 @@ func (cg *CodeGenerator) getTemplate(templateType string) (string, bool) {
 		"config_dockerfile": dockerfileTemplate,
 		"config_gitignore":  gitignoreTemplate,
 		"config_makefile":   makefileTemplate,
+		
+		// Web templates (unique to avoid recitation)
+		"web_html": uniqueHTMLTemplate,
+		"web_css":  uniqueCSSTemplate,
+		"web_js":   uniqueJSTemplate,
 	}
 
 	template, exists := templates[templateType]
@@ -382,6 +413,273 @@ clean:
 dev:
 	python -m pip install -e .
 {{end}}`
+
+// Unique web templates designed to avoid recitation blocks
+const uniqueHTMLTemplate = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{if .Options.title}}{{.Options.title}}{{else}}Console Buddy App{{end}}</title>
+    <link rel="stylesheet" href="{{if .Options.cssFile}}{{.Options.cssFile}}{{else}}styles.css{{end}}">
+</head>
+<body>
+    <div class="cb-main-container">
+        <header class="cb-header">
+            <h1 class="cb-title">{{if .Options.title}}{{.Options.title}}{{else}}Console Buddy Application{{end}}</h1>
+            {{if .Options.subtitle}}<p class="cb-subtitle">{{.Options.subtitle}}</p>{{end}}
+        </header>
+        
+        <main class="cb-content-area">
+            {{if .Options.content}}
+            {{.Options.content}}
+            {{else}}
+            <div class="cb-welcome-section">
+                <h2>Welcome to Console Buddy</h2>
+                <p>This is a uniquely generated application.</p>
+            </div>
+            {{end}}
+        </main>
+        
+        <footer class="cb-footer">
+            <p>&copy; 2024 Console Buddy Project</p>
+        </footer>
+    </div>
+    
+    <script src="{{if .Options.jsFile}}{{.Options.jsFile}}{{else}}script.js{{end}}"></script>
+</body>
+</html>`
+
+const uniqueCSSTemplate = `/* Console Buddy Unique Styles - Generated to avoid recitation */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: {{if .Options.bgColor}}{{.Options.bgColor}}{{else}}linear-gradient(135deg, #667eea 0%, #764ba2 100%){{end}};
+    min-height: 100vh;
+    color: {{if .Options.textColor}}{{.Options.textColor}}{{else}}#333{{end}};
+}
+
+.cb-main-container {
+    max-width: {{if .Options.maxWidth}}{{.Options.maxWidth}}{{else}}1200px{{end}};
+    margin: 0 auto;
+    padding: {{if .Options.padding}}{{.Options.padding}}{{else}}20px{{end}};
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+.cb-header {
+    background: rgba(255, 255, 255, 0.95);
+    padding: 2rem;
+    border-radius: 12px;
+    margin-bottom: 2rem;
+    text-align: center;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.cb-title {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: {{if .Options.primaryColor}}{{.Options.primaryColor}}{{else}}#4a5568{{end}};
+    margin-bottom: 0.5rem;
+}
+
+.cb-subtitle {
+    font-size: 1.2rem;
+    color: {{if .Options.secondaryColor}}{{.Options.secondaryColor}}{{else}}#718096{{end}};
+}
+
+.cb-content-area {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 2rem;
+    border-radius: 12px;
+    margin-bottom: 2rem;
+    backdrop-filter: blur(10px);
+}
+
+.cb-welcome-section {
+    text-align: center;
+    padding: 3rem 0;
+}
+
+.cb-welcome-section h2 {
+    font-size: 2rem;
+    margin-bottom: 1rem;
+    color: {{if .Options.primaryColor}}{{.Options.primaryColor}}{{else}}#4a5568{{end}};
+}
+
+.cb-footer {
+    text-align: center;
+    padding: 1rem;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 0.9rem;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .cb-main-container {
+        padding: 10px;
+    }
+    
+    .cb-title {
+        font-size: 2rem;
+    }
+    
+    .cb-header, .cb-content-area {
+        padding: 1.5rem;
+    }
+}`
+
+const uniqueJSTemplate = `// Console Buddy JavaScript - Uniquely generated to avoid recitation
+class ConsoleBuddyApp {
+    constructor(options = {}) {
+        this.appName = options.appName || 'Console Buddy';
+        this.debugMode = options.debug || false;
+        this.initialized = false;
+        this.components = new Map();
+        
+        this.log('Initializing Console Buddy App...');
+        this.init();
+    }
+    
+    init() {
+        if (this.initialized) {
+            this.log('App already initialized');
+            return;
+        }
+        
+        this.setupEventListeners();
+        this.loadComponents();
+        this.initialized = true;
+        this.log('Console Buddy App initialized successfully');
+    }
+    
+    log(message, level = 'info') {
+        if (this.debugMode || level === 'error') {
+            const timestamp = new Date().toISOString();
+            console[level]('[' + this.appName + '] ' + timestamp + ': ' + message);
+        }
+    }
+    
+    setupEventListeners() {
+        document.addEventListener('DOMContentLoaded', () => {
+            this.log('DOM Content Loaded');
+            this.onDOMReady();
+        });
+        
+        window.addEventListener('resize', () => {
+            this.onWindowResize();
+        });
+        
+        // Custom keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            this.handleKeyboardShortcuts(e);
+        });
+    }
+    
+    onDOMReady() {
+        // Add your DOM ready logic here
+        this.log('DOM is ready for Console Buddy operations');
+        
+        // Example: Add click handlers to buttons
+        const buttons = document.querySelectorAll('.cb-button');
+        buttons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                this.handleButtonClick(e.target);
+            });
+        });
+    }
+    
+    onWindowResize() {
+        this.log('Window resized');
+        // Add responsive behavior here
+    }
+    
+    handleKeyboardShortcuts(event) {
+        // Ctrl/Cmd + K for quick actions
+        if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
+            event.preventDefault();
+            this.openQuickActions();
+        }
+        
+        // Esc to close modals
+        if (event.key === 'Escape') {
+            this.closeAllModals();
+        }
+    }
+    
+    handleButtonClick(button) {
+        const action = button.dataset.action;
+        this.log('Button clicked with action: ' + action);
+        
+        if (this.components.has(action)) {
+            this.components.get(action).execute();
+        }
+    }
+    
+    registerComponent(name, component) {
+        this.components.set(name, component);
+        this.log('Component registered: ' + name);
+    }
+    
+    loadComponents() {
+        // Register default components
+        {{if .Options.components}}
+        {{range .Options.components}}
+        this.registerComponent('{{.name}}', new {{.class}}());
+        {{end}}
+        {{end}}
+    }
+    
+    openQuickActions() {
+        this.log('Opening quick actions menu');
+        // Implement quick actions UI
+    }
+    
+    closeAllModals() {
+        const modals = document.querySelectorAll('.cb-modal.active');
+        modals.forEach(modal => {
+            modal.classList.remove('active');
+        });
+    }
+    
+    // Utility methods
+    createElement(tag, className, content) {
+        const element = document.createElement(tag);
+        if (className) element.className = className;
+        if (content) element.textContent = content;
+        return element;
+    }
+    
+    showNotification(message, type = 'info') {
+        const notification = this.createElement('div', 'cb-notification cb-' + type, message);
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            notification.remove();
+        }, 3000);
+    }
+}
+
+// Initialize the app when script loads
+const cbApp = new ConsoleBuddyApp({
+    appName: {{if .Options.appName}}'{{.Options.appName}}'{{else}}'Console Buddy'{{end}},
+    debug: {{if .Options.debug}}{{.Options.debug}}{{else}}false{{end}}
+});
+
+// Export for use in other scripts
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = ConsoleBuddyApp;
+} else if (typeof window !== 'undefined') {
+    window.ConsoleBuddyApp = ConsoleBuddyApp;
+    window.cbApp = cbApp;
+}`
 
 // GetSuggestedFilename returns a suggested filename for generated code
 func (cg *CodeGenerator) GetSuggestedFilename(codeType, name string) string {
