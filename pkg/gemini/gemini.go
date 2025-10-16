@@ -2,11 +2,13 @@ package gemini
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"console-ai/pkg/config"
+
 	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/iterator"
 )
@@ -72,7 +74,9 @@ func ContinueConversation(model *genai.GenerativeModel, history []string, input 
 				hasResponded = true
 
 			case genai.FunctionCall:
-				stepCallback("Tool Call", fmt.Sprintf("Executing: %s", p.Name))
+				// Construct a more detailed message including function name and arguments
+				argsJson, _ := json.Marshal(p.Args) // Safely marshal args to JSON
+				stepCallback("Tool Call", fmt.Sprintf("\nExecuting: %s with args: %s", p.Name, string(argsJson)))
 				output, err := toolExecutor.Execute(p)
 				if err != nil {
 					stepCallback("Tool Error", err.Error())

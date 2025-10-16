@@ -135,7 +135,7 @@ func (l *Logger) shouldLog(level LogLevel) bool {
 // formatMessage formats a log message with timestamp, level, and caller information
 func (l *Logger) formatMessage(level LogLevel, message string) string {
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	
+
 	// Get caller information
 	_, file, line, ok := runtime.Caller(3) // Skip formatMessage, log method, and public method
 	var caller string
@@ -197,7 +197,7 @@ func (l *Logger) ErrorWithStack(err error, format string, args ...interface{}) {
 		if err != nil {
 			message = fmt.Sprintf("%s: %v", message, err)
 		}
-		
+
 		// Add stack trace
 		buf := make([]byte, 1024)
 		for {
@@ -208,7 +208,7 @@ func (l *Logger) ErrorWithStack(err error, format string, args ...interface{}) {
 			}
 			buf = make([]byte, 2*len(buf))
 		}
-		
+
 		fullMessage := fmt.Sprintf("%s\nStack trace:\n%s", message, string(buf))
 		l.logger.Println(l.formatMessage(ERROR, fullMessage))
 	}
@@ -217,7 +217,7 @@ func (l *Logger) ErrorWithStack(err error, format string, args ...interface{}) {
 // LogToolCall logs a tool call with its parameters
 func (l *Logger) LogToolCall(toolName string, params map[string]interface{}) {
 	if l.shouldLog(DEBUG) {
-		message := fmt.Sprintf("Tool call: %s with params: %+v", toolName, params)
+		message := fmt.Sprintf("\nTool call: %s with params: %+v", toolName, params)
 		l.logger.Println(l.formatMessage(DEBUG, message))
 	}
 }
@@ -232,9 +232,9 @@ func (l *Logger) LogToolResult(toolName string, success bool, result interface{}
 	if l.shouldLog(level) {
 		var message string
 		if success {
-			message = fmt.Sprintf("Tool %s completed successfully: %+v", toolName, result)
+			message = fmt.Sprintf("\nTool %s completed successfully: %+v", toolName, result)
 		} else {
-			message = fmt.Sprintf("Tool %s failed: %v", toolName, err)
+			message = fmt.Sprintf("\nTool %s failed: %v", toolName, err)
 		}
 		l.logger.Println(l.formatMessage(level, message))
 	}
@@ -248,7 +248,7 @@ func (l *Logger) LogConversation(role, message string) {
 		if len(message) > 500 {
 			truncated = message[:500] + "..."
 		}
-		logMessage := fmt.Sprintf("Conversation [%s]: %s", role, truncated)
+		logMessage := fmt.Sprintf("\nConversation [%s]: %s", role, truncated)
 		l.logger.Println(l.formatMessage(DEBUG, logMessage))
 	}
 }
@@ -263,7 +263,7 @@ type PerformanceTimer struct {
 // StartTimer starts a performance timer for the given operation
 func (l *Logger) StartTimer(operation string) *PerformanceTimer {
 	if l.shouldLog(DEBUG) {
-		l.Debug("Starting operation: %s", operation)
+		l.Debug("\nStarting operation: %s", operation)
 	}
 	return &PerformanceTimer{
 		logger:    l,

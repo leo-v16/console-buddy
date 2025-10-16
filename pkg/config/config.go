@@ -1,9 +1,9 @@
 package config
 
 import (
+	"os"
 	"strconv"
 	"strings"
-	"os"
 )
 
 // Config holds the application's hardcoded configuration.
@@ -27,10 +27,10 @@ type LogConfig struct {
 
 // AgentConfig holds agent-specific configuration
 type AgentConfig struct {
-	AutoAnalyze     bool // Automatically analyze project on startup
-	ContextualHelp  bool // Provide context-aware help
-	CodeGeneration  bool // Enable code generation features
-	SafetyMode      bool // Enable safety checks for dangerous commands
+	AutoAnalyze    bool // Automatically analyze project on startup
+	ContextualHelp bool // Provide context-aware help
+	CodeGeneration bool // Enable code generation features
+	SafetyMode     bool // Enable safety checks for dangerous commands
 }
 
 // GetConfig returns the hardcoded configuration.
@@ -44,19 +44,76 @@ func GetConfig() (*Config, error) {
 		HumorLevel:          0,
 		ModelName:           "gemini-2.5-flash",
 		AllowedCommands: []string{
-			"go", "git", "npm", "node", "pip", "py", "python", "cargo", "rustc", "yarn", "pnpm",
-			"make", "cmake", "mvn", "gradle", "dotnet", "composer", "bundle",
+			// Programming Languages & Runtimes
+			"go", "gofmt", "goimports", "python", "python3", "py", "node", "java", "javac",
+			"ruby", "perl", "php", "rustc", "cargo", "dotnet", "lua",
+
+			// Package Managers
+			"npm", "npx", "yarn", "pnpm", "pip", "pip3", "gem", "composer", "bundle",
+			"cargo", "poetry", "pipenv", "maven", "mvn", "gradle", "nuget",
+
+			// Version Control
+			"git", "gitk", "svn", "hg",
+
+			// Build Tools
+			"make", "cmake", "nmake", "msbuild", "ant", "webpack", "vite", "rollup",
+
+			// Compilers & Interpreters
+			"gcc", "g++", "clang", "clang++", "cl", "nvcc", "tsc", "babel",
+
+			// Testing Tools
+			"jest", "mocha", "pytest", "phpunit", "junit", "karma", "cypress",
+
+			// Linters & Formatters
+			"eslint", "prettier", "pylint", "black", "flake8", "rubocop", "phpstan",
+			"golint", "rustfmt", "stylelint",
+
+			// Database CLI Tools
+			"mysql", "psql", "sqlite3", "mongo", "mongosh", "redis-cli",
+
+			// Container & Orchestration
+			"docker", "docker-compose", "kubectl", "podman", "vagrant",
+
+			// Cloud Platform CLIs
+			"aws", "az", "gcloud", "firebase", "heroku", "vercel", "netlify",
+
+			// Windows Commands
+			"dir", "type", "copy", "xcopy", "move", "del", "mkdir", "rmdir", "cd",
+			"cls", "echo", "find", "findstr", "where", "tree", "attrib", "systeminfo",
+			"ipconfig", "netstat", "ping", "tracert", "nslookup", "tasklist",
+
+			// Unix/Linux Commands
+			"ls", "cat", "grep", "cp", "mv", "rm", "pwd", "touch", "chmod", "head",
+			"tail", "wc", "sort", "uniq", "diff", "sed", "awk", "tar", "gzip", "gunzip",
+			"zip", "unzip", "curl", "wget", "ssh", "scp", "rsync",
+
+			// Text Editors
+			"vim", "nvim", "nano", "emacs", "code", "notepad",
+
+			// Archive Tools
+			"tar", "zip", "unzip", "7z", "gzip", "gunzip", "bzip2",
+
+			// System Utilities
+			"env", "printenv", "which", "whoami", "hostname", "date", "time",
+			"clear", "history", "man", "help",
+
+			// Package Managers (System Level)
+			"choco", "scoop", "brew", "apt", "apt-get", "yum", "dnf",
+
+			// Other Development Tools
+			"jq", "base64", "openssl", "gpg", "nc", "telnet",
 		},
+
 		Logging: LogConfig{
 			Level:      "INFO",
 			File:       "logs/console-ai.log",
 			EnableFile: false,
 		},
 		Agent: AgentConfig{
-			AutoAnalyze:     true,
-			ContextualHelp:  true,
-			CodeGeneration:  true,
-			SafetyMode:      true,
+			AutoAnalyze:    true,
+			ContextualHelp: true,
+			CodeGeneration: true,
+			SafetyMode:     true,
 		},
 	}
 
@@ -140,4 +197,3 @@ func loadFromEnvironment(config *Config) error {
 
 	return nil
 }
-
